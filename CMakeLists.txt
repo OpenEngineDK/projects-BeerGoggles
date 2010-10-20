@@ -6,6 +6,7 @@ SET( PROJECT_NAME "BeerGoggles")
 SET( PROJECT_SOURCES
   # Add all the cpp source files here
   main.cpp
+  BoxRenderNode.cpp
 )
 
 # Include needed to use SDL under Mac OS X

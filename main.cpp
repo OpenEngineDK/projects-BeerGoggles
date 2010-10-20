@@ -29,8 +29,13 @@
 
 #include <Scene/MeshNode.h>
 #include <Scene/TransformationNode.h>
+#include <Scene/RenderStateNode.h>
+#include <Scene/DirectionalLightNode.h>
+
 #include <Core/IListener.h>
 #include <Core/EngineEvents.h>
+
+#include "BoxRenderNode.h"
 
 // Game factory
 //#include "GameFactory.h"
@@ -46,7 +51,6 @@ using namespace OpenEngine::Display;
 using namespace OpenEngine::Scene;
 
 class Rotator : public IListener<OpenEngine::Core::ProcessEventArg> {
-
     TransformationNode *node;
 public:
     Rotator(TransformationNode *node) : node(node) {}
@@ -54,6 +58,43 @@ public:
         float dt = arg.approx / 1000000.0;
         node->Rotate(0, dt, 0);
     }
+};
+
+class VerticeCollector : public ISceneNodeVisitor {
+
+    IDataBlockPtr block;
+
+public:
+    VerticeCollector(ISceneNode& node) : block(IDataBlockPtr()) {
+        node.Accept(*this);
+    }
+
+    void VisitMeshNode(MeshNode *meshNode) {
+
+        MeshPtr mesh = meshNode->GetMesh();
+        if (block.get()) {
+            logger.info << "Mesh!" << logger.end;
+            IDataBlockPtr vecs = mesh->GetGeometrySet()->GetVertices();
+            int ns = vecs->GetSize() + block->GetSize();
+            IDataBlockPtr nb = IDataBlockPtr(new DataBlock<3,float>(ns));
+            int offset = sizeof(float) * 3 * block->GetSize();
+            memcpy(nb->GetVoidDataPtr(), block->GetVoidDataPtr(), offset);
+            memcpy((void*)((long)(nb->GetVoidDataPtr())+offset),
+                   vecs->GetVoidDataPtr(), 
+                   sizeof(float) * 3 * vecs->GetSize());
+            block = nb;
+        } else {
+            IDataBlockPtr vecs = mesh->GetGeometrySet()->GetVertices();
+            block = vecs;
+        }
+        meshNode->VisitSubNodes(*this);
+
+    }
+
+    IDataBlockPtr GetBlock() {
+        return block;
+    }
+
 };
 
 /**
@@ -72,7 +113,8 @@ int main(int argc, char** argv) {
     ResourceManager<IModelResource>::AddPlugin(new AssimpPlugin());
 
     
-
+    Vector<4,float> blueColor = Vector<4,float>(0,0,1,1);
+ 
     // Create simple setup
     SimpleSetup* setup = new SimpleSetup("Beer Goggles");
 
@@ -85,14 +127,25 @@ int main(int argc, char** argv) {
             ResourceManager<IFontResource>::Create("Fonts/palatino/pala.ttf");
         datFont->Load();
 
+        TextureLoader& tl = setup->GetTextureLoader();
+
         WallCanvas *wc = new WallCanvas(setup->GetRenderer(), 
                                         setup->GetTextureLoader(),
                                         font);
     
         datFont->SetSize(42);
         wc->AddText("Fredagscafeen", datFont);
-        wc->SetBackgroundColor(Vector<4,float>(0,0,1,1));
-                                
+        wc->SetBackgroundColor(blueColor);
+        
+        
+        ITextureResourcePtr datcafeLogo = ResourceManager<ITextureResource>::Create("datcafe_logo/datcafe_logo.png");
+        datcafeLogo->Load();
+        tl.Load(datcafeLogo);
+        wc->AddTextureWithText(datcafeLogo, "Logo :D");
+
+
+        // stuff
+
         ICanvas *mainC = setup->GetCanvas();
         ICanvas *splitCanvas = new SplitScreenCanvas(*mainC, *wc);
 
@@ -104,38 +157,91 @@ int main(int argc, char** argv) {
 
     }
 
-    MeshPtr mp = MeshCreator::CreateCube(10,1,Vector<3,float>(1,0,0));
-    MeshNode* mn = new MeshNode(mp);
+    IRenderer& renderer = setup->GetRenderer();
+    renderer.SetBackgroundColor(blueColor);
+    
+        
+   
 
     TransformationNode* tn = new TransformationNode();
 
     TransformationNode *budT = new TransformationNode();
 
+    //IModelResourcePtr budModel = ResourceManager<IModelResource>::Create("Models/Euro 50L Keg/models/Euro 50L Keg.dae");
     IModelResourcePtr budModel = ResourceManager<IModelResource>::Create("Models/bud/models/bud.dae");
-    budModel->Load();
-    
+    budModel->Load();    
+
 
     budT->AddNode(budModel->GetSceneNode());
     budT->SetRotation(Quaternion<float>(-PI/3.0, Vector<3,float>(1,0,0)));
     tn->AddNode(budT);
 
-    Rotator *rot = new Rotator(tn);
-    setup->GetEngine().ProcessEvent().Attach(*rot);
+
+    VerticeCollector f(*budT);
+    IDataBlockPtr blk = f.GetBlock();
+    
+    
+    Box mbox(blk);
+    BoxRenderNode *bnode = new BoxRenderNode(mbox);   
+    TransformationNode* boxT = new TransformationNode();
+    boxT->AddNode(bnode);
+    
+    Quaternion<float> rQ = Quaternion<float>(-PI/2.0, Vector<3,float>(1,0,0));
+
+    boxT->SetRotation(rQ);
+
+    tn->AddNode(boxT);
+
 
     //tn->AddNode(mn);
-    ISceneNode *root = setup->GetScene();
-    root->AddNode(tn);
     
     
 
-    Camera *cam = new Camera(*(new PerspectiveViewingVolume(1,
+    Camera *cam = new Camera(*(new PerspectiveViewingVolume(10,
                                                             3000,
                                                             4.0/(3.0*2.0),
                                                             PI/4.0)));
-    cam->SetPosition(Vector<3,float>(10,10,-10));
-    cam->LookAt(Vector<3,float>(0,5,0));
 
+    logger.info << mbox.GetSize() << logger.end;
+
+    float dist = mbox.GetSize()[2];
+    cam->SetPosition(Vector<3,float>(dist,dist,-dist));
+
+    Vector<3,float> cent = mbox.GetCenter();
+    cent = rQ.RotateVector(cent);
+
+    TransformationNode *tn2 = new TransformationNode();
+    tn2->AddNode(tn);
+    tn->SetPosition(-cent);
+    Rotator *rot = new Rotator(tn2);
+    setup->GetEngine().ProcessEvent().Attach(*rot);
+    
+    
+    RenderStateNode* rsn = new RenderStateNode();
+    rsn->EnableOption(RenderStateNode::LIGHTING);
+    rsn->EnableOption(RenderStateNode::COLOR_MATERIAL);
+    ISceneNode *root = rsn;
+
+    root->AddNode(tn2);
+
+    setup->SetScene(*root);
+
+    cam->LookAt(Vector<3,float>(0.0));
     setup->SetCamera(*cam);
+
+    // Light
+    TransformationNode *lightT = new TransformationNode();
+    
+    DirectionalLightNode *light = new DirectionalLightNode();
+
+    lightT->AddNode(light);
+    lightT->SetPosition(Vector<3,float>(dist,dist,-dist));
+
+    lightT->SetRotation(cam->GetDirection());
+
+    root->AddNode(lightT);
+    
+
 
     // Start the engine.
     setup->GetEngine().Start();
