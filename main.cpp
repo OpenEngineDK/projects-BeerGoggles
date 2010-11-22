@@ -21,8 +21,10 @@
 #include <Resources/ResourceManager.h>
 
 #include <Display/WallCanvas.h>
+#include <Display/CanvasQueue.h>
 #include <Display/IFrame.h>
 #include <Display/OpenGL/SplitScreenCanvas.h>
+#include <Display/OpenGL/TextureCopy.h>
 #include <Display/PerspectiveViewingVolume.h>
 
 #include <Utils/MeshCreator.h>
@@ -34,6 +36,9 @@
 
 #include <Core/IListener.h>
 #include <Core/EngineEvents.h>
+
+#include <Renderers/OpenGL/Renderer.h>
+
 
 #include "BoxRenderNode.h"
 
@@ -48,6 +53,8 @@ using namespace OpenEngine::Core;
 using namespace OpenEngine::Utils;
 using namespace OpenEngine::Resources;
 using namespace OpenEngine::Display;
+using namespace OpenEngine::Display::OpenGL;
+using namespace OpenEngine::Renderers::OpenGL;
 using namespace OpenEngine::Scene;
 
 class Rotator : public IListener<OpenEngine::Core::ProcessEventArg> {
@@ -127,10 +134,16 @@ int main(int argc, char** argv) {
             ResourceManager<IFontResource>::Create("Fonts/palatino/pala.ttf");
         datFont->Load();
 
-        TextureLoader& tl = setup->GetTextureLoader();
+        //TextureLoader& tl = setup->GetTextureLoader();
 
-        WallCanvas *wc = new WallCanvas(setup->GetRenderer(), 
-                                        setup->GetTextureLoader(),
+        IRenderer* r = new Renderer();
+        TextureLoader* tl = new TextureLoader(*r);
+        r->PreProcessEvent().Attach(*tl);
+
+
+        WallCanvas *wc = new WallCanvas(new TextureCopy(), 
+                                        *r, //setup->GetRenderer(), 
+                                        *tl,
                                         font);
     
         datFont->SetSize(42);
@@ -138,20 +151,28 @@ int main(int argc, char** argv) {
         wc->SetBackgroundColor(blueColor);
         
         
-        ITextureResourcePtr datcafeLogo = ResourceManager<ITextureResource>::Create("datcafe_logo/datcafe_logo.png");
+        ITextureResourcePtr datcafeLogo = 
+            ResourceManager<ITextureResource>::Create("datcafe_logo/datcafe_logo.png");
         datcafeLogo->Load();
-        tl.Load(datcafeLogo);
+        tl->Load(datcafeLogo);
         wc->AddTextureWithText(datcafeLogo, "Logo :D");
 
 
         // stuff
-
         ICanvas *mainC = setup->GetCanvas();
-        ICanvas *splitCanvas = new SplitScreenCanvas(*mainC, *wc);
+
+        wc->AddTextureWithText(mainC->GetTexture(), "3d!");
+
+        ICanvas *splitCanvas = new SplitScreenCanvas(new TextureCopy(), *mainC, *wc);
+
+        CanvasQueue *cq = new CanvasQueue();
+        cq->PushCanvas(wc);
+        cq->PushCanvas(mainC);
+        
 
         IFrame &frame = setup->GetFrame();
-        frame.SetCanvas(splitCanvas);
-
+        //frame.SetCanvas(splitCanvas);
+        frame.SetCanvas(cq);
         setup->GetMouse().MouseMovedEvent().Attach(*wc);
         setup->GetMouse().MouseButtonEvent().Attach(*wc);
 
@@ -159,6 +180,7 @@ int main(int argc, char** argv) {
 
     IRenderer& renderer = setup->GetRenderer();
     renderer.SetBackgroundColor(blueColor);
+    renderer.SetBackgroundColor(Vector<4,float>(0,0,0,0));
     
         
    
